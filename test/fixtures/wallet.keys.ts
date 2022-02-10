@@ -21,3 +21,9 @@ export const recipientAddress = payments.p2wpkh({
   blindkey: blindKeyPair2.publicKey,
   network,
 }).confidentialAddress!;
+
+export const zeeAddress = payments.p2wpkh({
+  pubkey: keyPair2.publicKey,
+  blindkey: blindKeyPair2.publicKey,
+  network,
+});

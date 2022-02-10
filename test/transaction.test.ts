@@ -11,7 +11,11 @@ import { BuildTxArgs, craftMultipleRecipientsPset } from '../src/transaction';
 import { RecipientInterface } from '../src/types';
 
 import { APIURL, broadcastTx, faucet, mint } from './_regtest';
-import { recipientAddress, newRandomMnemonic } from './fixtures/wallet.keys';
+import {
+  zeeAddress,
+  recipientAddress,
+  newRandomMnemonic,
+} from './fixtures/wallet.keys';
 
 jest.setTimeout(50000);
 
@@ -161,16 +165,80 @@ describe('buildTx', () => {
     const txhex = await fetchTxHex(txid, APIURL);
     assert.doesNotThrow(() => Transaction.fromHex(txhex));
   });
+
+  it('should be able to use mixed inputs', async () => {
+    const tx = senderWallet.createTx();
+
+    const recipients = [
+      {
+        asset: networks.regtest.assetHash,
+        value: 50000,
+        address: zeeAddress.address!,
+      },
+      {
+        asset: USDT,
+        value: 50000,
+        address: recipientAddress,
+      },
+    ];
+
+    const unsignedTx = craftMultipleRecipientsPset({
+      ...args,
+      recipients,
+      psetBase64: tx,
+      addFee: true,
+    });
+    assert.doesNotThrow(() => Psbt.fromBase64(unsignedTx));
+
+    const blindingDataMap = new Map<number, BlindingDataLike>();
+
+    const transaction = Transaction.fromHex(psetToUnsignedHex(unsignedTx));
+    for (let i = 0; i < transaction.ins.length; i++) {
+      const input = transaction.ins[i];
+      const utxo = args.unspents.find(
+        u =>
+          input.hash.equals(Buffer.from(u.txid, 'hex').reverse()) &&
+          u.vout === input.index
+      );
+
+      if (!utxo) throw new Error('cannot find utxo');
+
+      const blindingData = utxo.unblindData;
+
+      if (blindingData) {
+        blindingDataMap.set(i, blindingData);
+      }
+    }
+
+    // blind only the change output
+    const blindedBase64 = await sender.blindPset(
+      unsignedTx,
+      [2],
+      undefined,
+      blindingDataMap
+    );
+    const signedBase64 = await sender.signPset(blindedBase64);
+    const signedPset = decodePset(signedBase64);
+
+    const hex = signedPset
+      .finalizeAllInputs()
+      .extractTransaction()
+      .toHex();
+
+    const txid = await broadcastTx(hex);
+    const txhex = await fetchTxHex(txid, APIURL);
+    assert.doesNotThrow(() => Transaction.fromHex(txhex));
+  });
 });
 
 describe('sendTx', () => {
-  const makeRecipient = (asset: string) => (
-    value: number
-  ): RecipientInterface => ({
+  const makeRecipient = (
+    asset: string,
+    address = 'Azpw1q7r7sd6FYEphGVX4UDXy9ZtbwbTMkA3YPPjfpmLwmKzLRjpN5gJ19PTYedjTJhERvqf7QSs2N6J'
+  ) => (value: number): RecipientInterface => ({
     asset,
     value,
-    address:
-      'Azpw1q7r7sd6FYEphGVX4UDXy9ZtbwbTMkA3YPPjfpmLwmKzLRjpN5gJ19PTYedjTJhERvqf7QSs2N6J',
+    address,
   });
 
   const makeTest = async (
